@@ -1,0 +1,1 @@
+为了避免Zc Framework太大，删除了这个链接底下的文件：https://github.com/PHPMailer/PHPMailer/tree/v5.2.7/language

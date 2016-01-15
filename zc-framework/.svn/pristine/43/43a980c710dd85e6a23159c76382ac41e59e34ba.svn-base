@@ -1,0 +1,150 @@
+<?php
+
+/**
+ * 我一直在犹豫有没有必要封装出来ZcWebUser这样大的东西。这个思路来源于Yii，其实如果没有ZcWebUser，如下所有的操作一样都可以完成。
+ *
+ * 封装ZcWebUser，代表当前Web Application的认证、授权、Flash数据、Session数据的操作。默认的ZcWebUser是基于Session的，所以使用该类前，必须使用Session先
+ *
+ * @author tangjianhui 2014-4-9 上午9:22:37
+ *
+ */
+class ZcWebUser implements ZcIInit {
+	const FLASH_KEY_PREFIX = 'Zc.ZcWebUser.flash.';
+	const FLASH_COUNTERS = 'Zc.ZcWebUser.flashcounters';
+	protected $autoUpdateFlash = true;
+	protected $keyPrefix;
+	protected $isInitialized = false;
+
+	/**
+	 *
+	 * @see ZcIInit::init()
+	 */
+	public function init() {
+		if ($this->autoUpdateFlash) {
+			$this->updateFlash();
+		}
+		$this->isInitialized = true;
+	}
+
+	/**
+	 *
+	 * @see ZcIInit::isInitialized()
+	 */
+	public function isInitialized() {
+		return $this->isInitialized;
+	}
+
+	protected function getStateKeyPrefix() {
+		if ($this->keyPrefix !== null) {
+			return $this->keyPrefix;
+		} else {
+			return $this->keyPrefix = md5(__FILE__);
+		}
+	}
+
+	public function setState($key, $value) {
+		$key = $this->getStateKeyPrefix() . $key;
+
+		if ($value === null) {
+			unset($_SESSION[$key]);
+		} else {
+			$_SESSION[$key] = $value;
+		}
+	}
+
+	public function unsetState($key) {
+		$this->setState($key, null);
+	}
+
+	public function getState($key, $defaultValue = null) {
+		$key = $this->getStateKeyPrefix() . $key;
+		return isset($_SESSION[$key]) ? $_SESSION[$key] : $defaultValue;
+	}
+
+	public function hasState($key) {
+		$key = $this->getStateKeyPrefix() . $key;
+		return isset($_SESSION[$key]);
+	}
+
+	public function clearStates() {
+		$keys = array_keys($_SESSION);
+		$prefix = $this->getStateKeyPrefix();
+		$n = strlen($prefix);
+		foreach ($keys as $key) {
+			if (!strncmp($key, $prefix, $n))
+				unset($_SESSION[$key]);
+		}
+	}
+
+	public function setFlash($key, $value) {
+		$this->setState(self::FLASH_KEY_PREFIX . $key, $value);
+		$counters = $this->getState(self::FLASH_COUNTERS, array ());
+
+		if ($value === null) {
+			unset($counters[$key]);
+		} else {
+			$counters[$key] = 0;
+		}
+		$this->setState(self::FLASH_COUNTERS, $counters);
+	}
+
+	public function unsetFlash($key) {
+		$this->setFlash($key, null);
+	}
+
+	public function getFlash($key, $defaultValue = null, $delete = true) {
+		$value = $this->getState(self::FLASH_KEY_PREFIX . $key, $defaultValue);
+		if ($delete) {
+			$this->unsetFlash($key);
+		}
+		return $value;
+	}
+
+	public function getFlashes($delete = true) {
+		$flashes = array ();
+		$prefix = $this->getStateKeyPrefix() . self::FLASH_KEY_PREFIX;
+		$keys = array_keys($_SESSION);
+		$n = strlen($prefix);
+
+		foreach ($keys as $key) {
+			if (!strncmp($key, $prefix, $n)) {
+				$flashes[substr($key, $n)] = $_SESSION[$key];
+				if ($delete) {
+					unset($_SESSION[$key]);
+				}
+			}
+		}
+
+		if ($delete) {
+			$this->setState(self::FLASH_COUNTERS, array ());
+		}
+		return $flashes;
+	}
+
+	public function hasFlash($key) {
+		return $this->getFlash($key, null, false) !== null;
+	}
+
+	protected function updateFlash() {
+		$counters = $this->getState(self::FLASH_COUNTERS);
+
+		if (!is_array($counters)) {
+			return;
+		}
+
+		foreach ($counters as $key => $count) {
+			if ($count) {
+				unset($counters[$key]);
+				$this->setState(self::FLASH_KEY_PREFIX . $key, null);
+			} else {
+				$counters[$key]++;
+			}
+		}
+
+		if (empty($counters)) {
+			$this->unsetState(self::FLASH_COUNTERS);
+		} else {
+			$this->setState(self::FLASH_COUNTERS, $counters);
+		}
+	}
+}

@@ -1,0 +1,882 @@
+<?php
+/**
+ * <p>高级版DB封装</p>
+ * 提供：多数据库管理、主从读写分离管理、SQL缓存、事务管理、数据分页、便利的查询和执行方法
+ * <h1>总体介绍</h1>
+ * <b>注意：不要用query开头的方法来执行更改DB的语句，用exec、insert、update、delete这些方法；</b>
+ * <p>query、getRows：用来执行select语句，getRows来源于Tmart DB类，不提供便利组装SQL的功能；返回二维关联数组；</p>
+ * <p>queryAllLists：用来执行select语句，返回二维数字下标数组</p>
+ * <p>queryFirstRow、getRow：用来执行select语句，返回第一条记录的一维的关联数组，getRow来源于Tmart DB类，不提供便利组装SQL的功能；底层调用query方法</p>
+ * <p>queryFirstList：用来执行select语句，返回第一条记录的一维的数字下标数组，底层调用queryAllLists方法</p>
+ * <p>queryFirstColumn：用来执行select语句，返回第一列的一维数组，底层调用queryAllLists方法</p>
+ * <p>queryOneColumn：用来执行select语句，返回某一的一维数组，底层调用query方法</p>
+ * <p>queryFirstField：用来执行select语句，返回第一列第一行，底层调用query方法</p>
+ * <p>queryPage: 执行分页，底层调用query方法
+ * <p>queryRaw: 返回特定驱动，比如mysql、mysqli、PDO等的原生结果，这个会让代码依赖于特定的驱动实现，不建议使用
+ * <p>exec：用来执行insert、update、delete语句，一样支持便利的SQL组装方法。</p>
+ * <p>insert：便利的执行insert语句，可插入一维数组或是二维数组，底层调用exec方法</p>
+ * <p>update：便利的执行update语句，底层调用exec方法</p>
+ * <p>delete：便利的执行delete语句，底层调用exec方法</p>
+ * 
+ * <h1>多数据库管理</h1>
+ * <p>按照ZcConfig里的[db.config][connections]可以定所有的数据库链接，支持多组主从结构的数据库集群($groupName)。某个数据库都有唯一的ID($dbId)</p>
+ * <p>可以配置数据库的每个数据库的主从，读的权重。更新SQL都会到master库，读SQL会根据权重自动分配，权重可以设置任意多个链接，如果没设，就按照公平的原则计算读权重，如果不想在某个库执行读，那么可以把read_height设置为0</p>
+ * <p>useDbIdOnce($groupNameOrDbId)方法用于强制某条SQL到某个库去执行，<strong>注意：这个方法只对接下来执行的SQL有效</strong>，可以填$groupName, 也可以是具体的某一个$dbID。</p>
+ * <p>eg.
+ * 		$db->useDbIdOnce('zc.slave1')->query("select now()"); 强制SQL到zc.slave1这个数据库去查 <br/>
+ * 	    $db->useDbIdOnce('zc')->query("select now()"); 强制SQL到zc这个集群去查, 根据读权重自动选择 <br/>
+ *      $db->useDbIdOnce('zc')->exec("insert into user(name, email) values('zc', 'lieyu063@gmail')"); 强制SQL到zc这个集群去执行，这时候会自动选择角色为master的去执行
+ * </p>
+ *
+ * <h1>SQL缓存</h1>
+ * <p>如果ZcConfig里设置了[db.config][db_cache]，那么就启用DB缓存。可以使用ZcCache支持的缓存方案，File、Apc、Memcached等</p>
+ * <p>cacheOnce($expire)方法用于设置某条查询的是否缓存，只要$expire > 0即缓存。<strong>注意：这个方法只对接下来执行的SQL有效</strong>
+ * <p>eg. $db->cacheOnce(60)->query("select * from user where id > %i", 50) 给接下来这条SQL结果缓存60秒</p>
+ *
+ * <h1>报错模式</h1>
+ * <p>支持两种报错模式：bool和exception。对于bool模式，DB操作失败，都返回false，程序仍然可以通过lastException()方法来取得最后一次出错的细节；对于exception模式，DB操作失败，直接抛出ZcDbException。</p>
+ * <p>setErrorMode: 程序可通过这个方法来在运行时设置报错模式。</p>
+ *
+ * <h1>事务管理</h1>
+ * <p>Java的Spring框架对数据库事务的支持，有两个很可取的地方：AOP和TransactionDefinition的事务属性</p>
+ * <p>AOP可以让事务处理对应用无侵入。我没有找到很好的PHP AOP思路，所以暂且作罢，现在的ZcDb的事务只能采用编程式事务</p>
+ * <p>ZcTransactionDefinition目前支持Spring事务传播性的：PROPAGATION_REQUIRED和PROPAGATION_NESTED</p>
+ *
+ * <h1>数据分页</h1>
+ * <p>list($rows, $totalCoount) = $this->queryPage("select * from user where id > %i", 500, 6, 30); 取出SQL的第6页，每页30条</p>
+ *
+ * <h1>便利的查询和执行方法</h1>
+ * <p>提供了类似MeekroDB的便利方法，“总体介绍”已经简单介绍，更详细的文档如下 <a href="http://www.meekro.com/docs.php">http://www.meekro.com/docs.php</a></p>
+ * <p>但是抛弃了如下几个方法，括号中是理由：queryOneField(同上)、queryFullColumns(实用价值不大，应该去改写SQL)、insertIgnore(不同的RMDB无法移植，非标准的SQL，不鼓励使用，如果确实需要，可以调用exec方法自己拼接SQL)、insertUpdate(同上)、replace(同上)</p>
+ * <p>多了$prepare()方法，把组装SQL的方法暴漏出来。</p>
+ * <p>多了$queryPage()方法，很便利的分页查询 </p>
+ *
+ * @author tangjianhui 2013-8-12 下午2:18:04
+ *
+ */
+class ZcDb {
+	const EVENT_BEFORE_BUILD_SQL = 1;
+	const EVENT_AFTER_BUILD_SQL = 2;
+	const EVENT_BEFORE_EXEC_SQL = 3;
+	const EVENT_AFTER_EXEC_SQL = 4;
+	const EVENT_BEFORE_GET_CACHE = 5;
+	const EVENT_AFTER_GET_CACHE = 6;
+	const EVENT_BEFORE_SET_CACHE = 7;
+	const EVENT_AFTER_SET_CACHE = 8;
+	const EVENT_ERROR = 9;
+
+	const SQL_SELECT = 1;
+	const SQL_INSERT = 2;
+	const SQL_UPDATE = 3;
+	const SQL_DELETE = 4;
+	const SQL_EXEC = 5;
+
+	const ERROR_MODE_BOOL = 'bool';
+	const ERROR_MODE_EXCEPTION = 'exception';
+
+	/**
+	 * @var ZcDbListener[]
+	 */
+	protected $dbListeners = array();
+
+	protected $config = array();
+
+	protected $currDb = false;
+	protected $currCacheExpire = false;
+
+	/**
+	 * SQL缓存
+	 * @var ZcAbstractCache
+	 */
+	protected $cache = false;
+
+	protected $lastInsertId;
+	protected $affectedRows;
+	protected $lastException;
+	protected $errorMode;
+
+	protected $connections = array();	//当前的所有链接
+
+	protected $dbIdMapping = array();
+	protected $groupMapping = array();
+	protected $groupMaxValve = array();
+
+	public function __construct($config = ''){
+		if (empty($config)) {
+			$config = Zc::C(ZcConfigConst::DbConfig);
+		}
+		$this->config = $config;
+
+		// 初始化DB缓存
+		if (isset($this->config['db_cache'])) {
+			$cc = $this->config['db_cache'];
+			$this->cache = Zc::getCache($cc['biz_name'], $cc['cache_type'], $cc['timestamp'], $cc['options']);
+		}
+
+		// 重新计算分布式DB的配置和权重
+		foreach ($this->config['connections'] as $groupName => &$groupConfig) {
+			$this->groupMapping[$groupName]['master'] = array(
+					'role' => 'master',
+					'db_id' => $groupConfig['master']['db_id'],
+					'read_weight' => isset($groupConfig['master']['read_weight']) ? $groupConfig['master']['read_weight'] : false,
+					);
+
+			$this->dbIdMapping[$groupConfig['master']['db_id']] = &$groupConfig['master'];
+			$this->dbIdMapping[$groupConfig['master']['db_id']]['role'] = 'master';
+
+			if (!empty($groupConfig['slaves'])) {
+				foreach($groupConfig['slaves'] as &$slaveConfig) {
+					$this->dbIdMapping[$slaveConfig['db_id']] = &$slaveConfig;
+					$this->dbIdMapping[$slaveConfig['db_id']]['role'] = 'slave';
+
+
+					$this->groupMapping[$groupName][] = array(
+							'role' => 'slave',
+							'db_id' => $slaveConfig['db_id'],
+							'read_weight' => isset($slaveConfig['read_weight']) ? $slaveConfig['read_weight'] : false,
+					);
+				}
+			}
+		}
+
+		//重新计算下每台机器要分配的读权重
+		foreach ($this->groupMapping as $groupName => &$group) {
+			$countWeight = 0;
+			$setCount = 0;
+			foreach($group as &$host) {
+				if ($host['read_weight'] !== false) {
+					$setCount++;
+				}
+				$countWeight += $host['read_weight'];
+			}
+			if ($setCount === 0) {
+				$setCount = count($group);
+				$countWeight = 100;
+			}
+			$unsetWeight = (int)($countWeight / $setCount);
+
+			$currValve = 0;
+			foreach($group as &$host) {
+				if ($host['read_weight'] === false) {
+					$host['read_weight'] = $unsetWeight;
+				}
+				$currValve += $host['read_weight'];
+				$host['read_valve'] = $currValve;
+			}
+
+			$this->groupMaxValve[$groupName] = $currValve;
+		}
+	}
+
+	/**
+	 * 设置Cache
+	 *
+	 * @param ZcAbstractCache $cache
+	 */
+	public function setCache($cache) {
+		$this->cache = $cache;
+	}
+
+	/**
+	 * 设置当前的报错模式，并返回老的报错模式
+	 * @param string $newErrorMode
+	 * @return ZcDbException|multitype:
+	 */
+	public function setErrorMode($newErrorMode) {
+		$oldErrorMode = $this->config['error_mode'];
+		$this->config['error_mode'] = $newErrorMode;
+		return $oldErrorMode;
+	}
+
+	public function close() {
+		try {
+			/* @var $conn ZcDbConnection */
+			foreach ($this->connections as $conn) {
+				$conn->close();
+			}
+		} catch(Exception $ex) {
+			$this->handleException($ex);
+		}
+	}
+
+	/**
+	 * @param string $groupNameOrDbId
+	 * @return ZcDb
+	 */
+	public function useDbIdOnce($groupNameOrDbId) {
+		$this->currDb = $groupNameOrDbId;
+		return $this;
+	}
+
+	protected function getOnceDbId() {
+		return $this->currDb;
+	}
+
+	/**
+	 *
+	 * @param integer $expire
+	 * @return ZcDb
+	 */
+	public function cacheOnce($expire) {
+		$this->currCacheExpire = $expire;
+		return $this;
+	}
+
+	private function getCurrCacheExpire() {
+		$currCacheExpire = $this->currCacheExpire;
+		$this->currCacheExpire = false;
+		return $currCacheExpire;
+	}
+
+	public function lastInsertId() {
+		return $this->lastInsertId;
+	}
+
+	public function lastException() {
+		return $this->lastException;
+	}
+
+	public function affectedRows() {
+		return $this->affectedRows;
+	}
+
+	/**
+	 * 添加Db监听器
+	 *
+	 * @param ZcDbListener $listener
+	 */
+	public function addDbListener($listener) {
+		if ($listener instanceof ZcDbListener) {
+			$this->dbListeners[] = $listener;
+		}
+	}
+
+	/**
+	 * 返回所有的监听器
+	 *
+	 * @return ZcDbListener[]
+	 */
+	public function getDbListeners() {
+		return $this->dbListeners;
+	}
+
+	private function notify($eventType, $args) {
+		/* @var $dbListener ZcDbListener */
+		foreach ($this->dbListeners as $dbListener) {
+			switch ($eventType) {
+				case self::EVENT_BEFORE_BUILD_SQL:
+					$dbListener->beforeBuildSql($this, $args);
+					break;
+				case self::EVENT_BEFORE_EXEC_SQL:
+					$dbListener->beforeExecSql($this, $args);
+					break;
+				case self::EVENT_BEFORE_GET_CACHE:
+					$dbListener->beforeGetCache($this, $args);
+					break;
+				case self::EVENT_BEFORE_SET_CACHE:
+					$dbListener->beforeSetCache($this, $args);
+					break;
+				case self::EVENT_AFTER_BUILD_SQL:
+					$dbListener->afterBuildSql($this, $args);
+					break;
+				case self::EVENT_AFTER_EXEC_SQL:
+					$dbListener->afterExecSql($this, $args);
+					break;
+				case self::EVENT_AFTER_GET_CACHE:
+					$dbListener->afterGetCache($this, $args);
+					break;
+				case self::EVENT_AFTER_SET_CACHE:
+					$dbListener->afterSetCache($this, $args);
+					break;
+				case self::EVENT_ERROR:
+					$dbListener->error($this, $args);
+					break;
+				default:
+					throw new ZcDbException("unknow event type [$eventType]");
+			}
+		}
+	}
+
+	private function innerExec($sqlType, $args) {
+		try {
+			$this->notify(self::EVENT_BEFORE_BUILD_SQL, array('sqlType' => $sqlType, 'args' => $args));
+
+			$conn = $this->chooseConnection('insert');
+
+			$sb = $conn->getSqlBuilder();
+			if ($sqlType == self::SQL_INSERT) {
+				$sql = $sb->buildInsert($args);
+			} else if ($sqlType == self::SQL_UPDATE) {
+				$sql = $sb->buildUpdate($args);
+			} else if ($sqlType == self::SQL_DELETE) {
+				$sql = $sb->buildDelete($args);
+			} else if ($sqlType == self::SQL_EXEC) {
+				$sql = $sb->buildQuery($args);
+			} else {
+				throw new ZcDbException("unkonw sql type [$sqlType]");
+			}
+
+			$this->notify(self::EVENT_AFTER_BUILD_SQL, array('sqlType' => $sqlType, 'args' => $args, 'dbId' => $conn->getDbId(), 'sql' => $sql));
+
+			$this->notify(self::EVENT_BEFORE_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+			$this->affectedRows = $conn->exec($sql);
+
+			$this->notify(self::EVENT_AFTER_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+			if ($sqlType == self::SQL_INSERT || $sqlType == self::SQL_EXEC) {
+				$this->lastInsertId = $conn->lastInsertId();
+			}
+
+			return $this->affectedRows;
+		} catch (Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	/**
+	 * 如果采用distributed模式，在没有做DB Route之前，需要强制指定在哪台数据库执行
+	 *
+	 * @param string $sql
+	 * @param string $dbId
+	 */
+	public function exec() {
+		$args = func_get_args();
+		return $this->innerExec(self::SQL_EXEC, $args);
+	}
+
+	/**
+	 * <p>把$datas插入$tableName指定的表里。如果$datas是个一维的关联数组，那么插入一行记录，如果是二维的关联数组，那么插入多行记录
+	 * 此方法会自动对所有的段做escape来防止SQL注入</p>
+	 * <p>当插入多行的情况，返回第一行的id。这是mysql文档约定的：http://stackoverflow.com/questions/1679295/php-mysql-insert-id-on-multiple-rows</p>
+	 *
+	 * @param string $tableName 待插入的table名字
+	 * @param string $datas 待插入的数据
+	 * @param string $dbId  配置中数据库的ID，如果为空，就用系统默认
+	 * @return integer 如果失败，返回false；如果成功，影响的行数
+	 */
+	public function insert($tableName, $datas) {
+		if (empty($datas)) {
+			return 0;
+		}
+		$args = func_get_args();
+		return $this->innerExec(self::SQL_INSERT, $args);
+	}
+
+	/**
+	 * <p>参数形式：$tableName, $data, $where, $params...</p>
+	 * <p><b>注意：因为参数的where之句、参数列表是变长的，导致该方法的形参没有写到方法声明里去</b></p>
+	 * @param string $tableName 待更新的表名
+	 * @param array  $data 关联数组
+	 * @param string $where where条件，可选参数
+	 * @param mixed  $args 一个或多个参数，可选变长参数
+	 * @return integer|false 返回受影响的行数，如果失败，返回false
+	 */
+	public function update($tableName, $data, $where = '', $params = array()) {
+		if (empty($data)) {
+			return 0;
+		}
+		$args = func_get_args();
+		return $this->innerExec(self::SQL_UPDATE, $args);
+	}
+
+	/**
+	 * <p>参数形式：$tableName, $where, $params...</p>
+	 */
+	public function delete($tableName, $where, $params = array()) {
+		$args = func_get_args();
+		return $this->innerExec(self::SQL_DELETE, $args);
+	}
+
+	/**
+	 * 从Connection处理，出现错误，都返回ZcDbException，至于客户看到什么，由这个方法决定
+	 *
+	 * @param ZcDbException $ex
+	 */
+	private function handleException($ex) {
+		$this->notify(self::EVENT_ERROR, array('exception' => $ex));
+
+		$this->lastException = $ex;
+		if ($this->config['error_mode'] == 'bool') {
+			return false;
+		} else {
+			throw $ex;
+		}
+	}
+
+	private function prependCall($function, $args, $resultType) {
+		array_unshift($args, $resultType);
+		return call_user_func_array($function, $args);
+	}
+
+	private function queryHelper() {
+		try {
+			$currCacheExpire = $this->getCurrCacheExpire();
+
+			$args = func_get_args();
+			$resultType = array_shift($args);
+
+			$this->notify(self::EVENT_BEFORE_BUILD_SQL, array('sqlType' => self::SQL_SELECT, 'args' => $args));
+
+			$conn = $this->chooseConnection("select");
+
+			$sb = $conn->getSqlBuilder();
+			$sql = $sb->buildQuery($args);
+
+			$this->notify(self::EVENT_AFTER_BUILD_SQL, array('sqlType' => self::SQL_SELECT, 'args' => $args, 'dbId' => $conn->getDbId(), 'sql' => $sql));
+
+			$ret = false;
+			$cacheKey = md5($sql);
+			if ($currCacheExpire > 0 && $this->cache) {
+				$this->notify(self::EVENT_BEFORE_GET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey));
+
+				$ret = $this->cache->get($cacheKey);
+
+				$this->notify(self::EVENT_AFTER_GET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey, 'ret' => $ret));
+			}
+
+			if ($ret == false) {
+				$this->notify(self::EVENT_BEFORE_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+				$ret = $conn->query($sql, $resultType);
+
+				$this->notify(self::EVENT_AFTER_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+				if ($currCacheExpire > 0 && $this->cache && $ret) {
+
+					$this->notify(self::EVENT_BEFORE_SET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey, 'ret' => $ret));
+
+					$sr = $this->cache->set($cacheKey, $ret, $currCacheExpire);
+
+					$this->notify(self::EVENT_AFTER_SET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey, 'ret' => $ret));
+				}
+			}
+			return $ret;
+		} catch (Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	/**
+	 * 只组装SQL，不执行
+	 *
+	 * @param string $baseSql
+	 * @param array $continueArgs
+	 * @return boolean|string 最终的SQL，失败返回false
+	 */
+	public function prepare($baseSql, $continueArgs = null) {
+		if (empty($baseSql)) {
+			return false;
+		}
+
+		$args = func_get_args();
+
+		$conn = $this->chooseConnection($baseSql);
+		$sb = $conn->getSqlBuilder();
+
+		return $sb->buildQuery($args);
+	}
+
+	/**
+	 * 查询便利方法。
+	 * <p>$db->getRows($querySql, 60, 'zc-master') 等价于 $db->cacheOnce(60)->useDbIdOnce('zc-master')->query($querySql);</p>
+	 *
+	 * @param string $querySql
+	 * @param integer $cache
+	 * @param string $forceDb
+	 * @return mixed
+	 */
+	public function getRows($querySql, $cache = 0, $forceDb = '') {
+		if ((int)$cache > 0) {
+			$this->cacheOnce($cache);
+		}
+		if (!empty($forceDb)) {
+			$this->useDbIdOnce($forceDb);
+		}
+		$rows = $this->query($querySql);
+
+		return $rows;
+	}
+
+	/**
+	 * 查询便利方法。
+	 * <p>$db->getRow('select * from admin', 60, 'zc-master') 等价于 $db->cacheOnce(60)->useDbIdOnce('zc-master')->queryFirstRow('select * from admin limit 1') 等价于  $db->cacheOnce(60)->useDbIdOnce('zc-master')->queryFirstRow('select * from admin')</p>
+	 *
+	 * @param string $querySql
+	 * @param integer $cache
+	 * @param string $forceDb
+	 * @return Ambigous <multitype:, mixed>
+	 */
+	public function getRow($querySql, $cache = 0, $forceDb = '') {
+		if ((int)$cache > 0) {
+			$this->cacheOnce($cache);
+		}
+		if (!empty($forceDb)) {
+			$this->useDbIdOnce($forceDb);
+		}
+		return $this->queryFirstRow($querySql);
+	}
+
+
+	/**
+	 * @return ZcDbEval
+	 */
+	public function sqleval() {
+		$args = func_get_args();
+		return new ZcDbEval($args);
+	}
+
+	public function query() {
+		$args = func_get_args();
+		return $this->prependCall(array($this, 'queryHelper'), $args, ZcDbConnection::RESULT_ASSOC);
+	}
+
+	public function queryRaw() {
+		$args = func_get_args();
+		return $this->prependCall(array($this, 'queryHelper'), $args, ZcDbConnection::RESULT_RAW);
+	}
+
+	/**
+	 * 用于分页查询的便利方法，和query相比，最后两个参数必须为数字，倒数第1个是PageSize，倒数第二个是PageNum
+	 * <p>eg. $db->queryPage("select id, email from user where id > %i", 10, 1, 20);</p>
+	 *
+	 * @return ZcPage 返回ZcPage对象，失败返回false
+	 */
+	public function queryPage() {
+		try {
+			$currCacheExpire = $this->getCurrCacheExpire();
+
+			$args = func_get_args();
+
+			$pageSize = intval(array_pop($args));
+			$pageNum = intval(array_pop($args));
+
+			$this->notify(self::EVENT_BEFORE_BUILD_SQL, array('sqlType' => self::SQL_SELECT, 'args' => $args));
+
+			$conn = $this->chooseConnection("select");
+
+			$sb = $conn->getSqlBuilder();
+			$selectSql = $sb->buildQuery($args);
+			list($limitSelectSql, $totalCountSql) = $sb->buildQueryPage($selectSql, $pageNum, $pageSize);
+
+			$sql = $limitSelectSql . ';' .  $totalCountSql;
+
+			$this->notify(self::EVENT_AFTER_BUILD_SQL, array('sqlType' => self::SQL_SELECT, 'args' => $args, 'dbId' => $conn->getDbId(), 'sql' => $sql));
+
+			$ret = false;
+			$cacheKey = md5($sql);
+			if ($currCacheExpire > 0 && $this->cache) {
+
+				$this->notify(self::EVENT_BEFORE_GET_CACHE, array('cacheKey' => $cacheKey, 'sql' => $sql));
+
+				$ret = $this->cache->get($cacheKey);
+
+				$this->notify(self::EVENT_AFTER_GET_CACHE, array('cacheKey' => $cacheKey, 'sql' => $sql));
+			}
+
+			if ($ret == false) {
+
+				$this->notify(self::EVENT_BEFORE_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+				$rows = $conn->query($limitSelectSql, ZcDbConnection::RESULT_ASSOC);
+				$totalCountRows = $conn->query($totalCountSql, ZcDbConnection::RESULT_NUM);
+				$totalCount = intval($totalCountRows[0][0]);
+
+				$this->notify(self::EVENT_AFTER_EXEC_SQL, array('sql' => $sql, 'dbId' => $conn->getDbId()));
+
+				$ret = array($rows, $totalCount);
+
+				if ($currCacheExpire > 0 && $this->cache && $ret) {
+
+					$this->notify(self::EVENT_BEFORE_SET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey, 'ret' => $ret));
+
+					$sr = $this->cache->set($cacheKey, $ret, $currCacheExpire);
+
+					$this->notify(self::EVENT_AFTER_SET_CACHE, array('sql' => $sql, 'cacheKey' => $cacheKey, 'ret' => $ret));
+				}
+			}
+
+			return $ret;
+		} catch(Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	public function queryFirstRow() {
+		$args = func_get_args();
+		if (preg_match('/limit(\s+)1(\s*)$/i', $args[0]) === 0) {
+			$args[0] .= ' LIMIT 1';
+		}
+		$rows = call_user_func_array(array($this, 'query'), $args);
+		return $rows ? reset($rows) : array();
+	}
+
+	public function queryFirstList() {
+		$args = func_get_args();
+		$rows = call_user_func_array(array($this, 'queryAllLists'), $args);
+		return $rows ? reset($rows) : array();
+	}
+
+	/**
+	 * <p>取第一列, 把二维数组变成一维数组的辅助查询方法</p>
+	 *
+	 * @return boolean|multitype:unknown
+	 */
+	public function queryFirstColumn() {
+		$args = func_get_args();
+		$rows = call_user_func_array(array($this, 'queryAllLists'), $args);
+
+		$ret = array();
+		if (!count($rows) || !count($rows[0])) {
+			return $ret;
+		}
+
+		foreach($rows as $row) {
+			$ret[] = $row[0];
+		}
+
+		return $ret;
+	}
+
+	/**
+	 * 取出查询结果的某一列
+	 *
+	 * @param string $column
+	 * @param string $sql
+	 * @param mixed $params...
+	 * @return array
+	 */
+	public function queryOneColumn($column, $sql, $params = array()) {
+		$args = func_get_args();
+		$column = array_shift($args);
+		$results = call_user_func_array(array($this, 'query'), $args);
+		$ret = array();
+
+		if (!count($results) || !count($results[0])) {
+			return $ret;
+		}
+		if ($column === null) {
+			$keys = array_keys($results[0]);
+			$column = $keys[0];
+		}
+
+		foreach ($results as $row) {
+			$ret[] = $row[$column];
+		}
+
+		return $ret;
+	}
+
+	public function queryFirstField() {
+		$args = func_get_args();
+		$row = call_user_func_array(array($this, 'queryFirstList'), $args);
+		return $row ? $row[0] : false;
+	}
+
+
+	/**
+	 * 返回数字索引的结果集
+	 * @return mixed
+	 */
+	public function queryAllLists() {
+		$args = func_get_args();
+		return $this->prependCall(array($this, 'queryHelper'), $args, ZcDbConnection::RESULT_NUM);
+	}
+
+	/**
+	 * <p>开始一个事务，可以传递一个ZcTransactionDefinition对象来定义这个事务的隔离级别和传播属性。也可以通过$groupNameOrDbId来定义事务的的集群或数据库。</p>
+	 * <p>如果都没有传递参数，那么默认就以db.config的配置</p>
+	 *
+	 * @param ZcTransactionDefinition $transactionDefinition
+	 * @param string $groupNameOrDbId
+	 * @throws Exception
+	 * @return ZcTransactionStatus
+	 */
+	public function startTransaction($transactionDefinition = false, $groupNameOrDbId = '') {
+		try {
+			return $this->doStartTransaction($transactionDefinition, $groupNameOrDbId);
+		} catch(Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	private function doStartTransaction($transactionDefinition = false, $groupNameOrDbId = '') {
+		$this->useDbIdOnce($groupNameOrDbId);
+		$conn = $this->chooseConnection('insert');
+		if (!$conn->isMasterRole()) {
+			throw new ZcDbException("transaction expected master role, $groupNameOrDbId");
+		}
+
+		if (empty($transactionDefinition)) {
+			$transactionDefinition = new ZcTransactionDefinition($this->config['tx_def']['propagation'], $this->config['tx_def']['isolation_level']);
+		}
+
+		if ($conn->isTransactionActive()) {
+			return $this->handleExistingTransaction($conn, $transactionDefinition);
+		}
+
+		if ($transactionDefinition->getPropagationBehavior() == ZcTransactionDefinition::PROPAGATION_REQUIRED || $transactionDefinition->getPropagationBehavior() == ZcTransactionDefinition::PROPAGATION_NESTED) {
+			$status = new ZcTransactionStatus($conn, $transactionDefinition, true);
+			$conn->startTransaction($transactionDefinition->getIsolationLevel());
+			return $status;
+		} else {
+			throw new ZcDbException("unknow propagation behavior:" . $transactionDefinition->getPropagationBehavior());
+		}
+	}
+
+	/**
+	 * 回滚事务
+	 *
+	 * @param ZcTransactionStatus $status
+	 */
+	public function rollback($status) {
+		try {
+			return $this->doRollback($status);
+		} catch (Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	private function doRollback($status) {
+		if (empty($status)) {
+			throw new ZcDbException("status can not be empty in rollback method.");
+		}
+
+		if ($status->isCompleted()) {
+			throw new ZcDbException("Transaction is already completed - do not call commit or rollback more than once per transaction");
+		}
+
+		if ($status->hasSavepoint()) {
+			//回滚事务到savepoint
+			$status->rollbackToHeldSavepoint();
+
+		} else if ($status->isNewTransaction()) {
+			//回滚初始的事务
+			$status->getConnection()->rollback();
+
+		} else if ($status->hasTransaction()) {
+			$status->getConnection()->setRollbackOnly();
+
+		} else {
+			// 没有事务，啥也不做。现在不可能执行到这边，以后如果支持Spring的其它事务传播方式，再考虑有没有可能执行到这里
+			throw new ZcDbException("Cann't execute to here");
+		}
+
+		$status->setCompleted();
+	}
+
+	/**
+	 * 提交事务
+	 *
+	 * @param ZcTransactionStatus $status
+	 */
+	public function commit($status) {
+		try {
+			return $this->doCommit($status);
+		} catch (Exception $ex) {
+			return $this->handleException($ex);
+		}
+	}
+
+	private function doCommit($status) {
+		if ($status->isCompleted()) {
+			throw new ZcDbException("Transaction is already completed - do not call commit or rollback more than once per transaction");
+		}
+
+		if ($status->getConnection()->isRollbackOnly()) {
+			$this->rollback($status);
+			return;
+		}
+
+		if ($status->hasSavepoint()) {
+			$status->releaseHeldSavepoint();
+
+		} else if ($status->isNewTransaction()) {
+			$status->getConnection()->commit();
+
+		} else {
+			// PROPAGATION_REQUIRED执行到这边，啥也不做
+		}
+
+		$status->setCompleted();
+	}
+
+	/**
+	 * 处理当前链接已经有事务的情况
+	 *
+	 * @param ZcDbConnection $conn
+	 * @param ZcTransactionDefinition $transactionDefinition
+	 */
+	private function handleExistingTransaction($conn, $transactionDefinition) {
+		if ($transactionDefinition->getPropagationBehavior() == ZcTransactionDefinition::PROPAGATION_REQUIRED) {
+			$status = new ZcTransactionStatus($conn, $transactionDefinition, false);
+			return $status;
+		}
+
+		if ($transactionDefinition->getPropagationBehavior() == ZcTransactionDefinition::PROPAGATION_NESTED) {
+			if (!$conn->supportsSavepoints()) {
+				throw new ZcDbException("$conn do not support savepoints");
+			}
+
+			$status = new ZcTransactionStatus($conn, $transactionDefinition, false);
+			$status->createAndHoldSavepoint();
+			return $status;
+		}
+	}
+
+	/**
+	 * 选择执行该条sql的链接
+	 *
+	 * @param string $sql
+	 * @param string $dbId
+	 * @return ZcDbConnection
+	 */
+	protected function chooseConnection($sql) {
+		$dbId = $this->chooseDbId($sql);
+		if (!isset($this->connections[$dbId])) {
+			$config = $this->dbIdMapping[$dbId];
+			$driverClass = 'Zc' . ucwords($config['dbms']) . 'DbConnection';
+			$this->connections[$dbId] = new $driverClass($config);
+		}
+		return $this->connections[$dbId];
+	}
+
+	private function chooseDbId($sql) {
+		$groupNameOrDbId = $this->config['default_group'];
+		if (!empty($this->currDb)) {
+			$groupNameOrDbId = $this->currDb;
+			$this->currDb = null;
+		}
+
+		$sqlType = strtolower(substr(trim($sql), 0, 6));
+
+		// 如果已经指定了$dbId,那么就以指定的为准。但是要注意：slave不能执行写入操作，如果出现这种情况，就抛出异常
+		if (!empty($groupNameOrDbId) && isset($this->dbIdMapping[$groupNameOrDbId])) {
+			if ($sqlType !== 'select' && $this->dbIdMapping[$groupNameOrDbId]['role'] === 'salve') {
+				throw new ZcDbException("cannot execute write sql in slave " . $groupNameOrDbId);
+			}
+			return $groupNameOrDbId;
+		}
+
+		$groupName = $groupNameOrDbId;
+		if (empty($this->groupMapping[$groupName])) {
+			throw new ZcDbException("cannot find db groupname " . $groupName);
+		}
+		$group = $this->groupMapping[$groupName];
+
+		//如果不是select，那么就返回该组的master
+		if ($sqlType !== 'select') {
+			return $group['master']['db_id'];
+		}
+
+		//最后按照read_value，选择一个链接做为读的链接
+		$valve = mt_rand(1, $this->groupMaxValve[$groupName]);
+		foreach ($group as $host) {
+			if ($valve <= $host['read_valve']) {
+				return $host['db_id'];
+			}
+		}
+
+		return $group['master']['db_id'];
+	}
+}
