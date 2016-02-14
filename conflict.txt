@@ -1,5 +1,5 @@
 <?php 
 
-echo '³åÍ»test1';
+echo 'å†²çªtest1';
 
 ?>
