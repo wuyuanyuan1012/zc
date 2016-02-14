@@ -1,5 +1,5 @@
 <?php 
 
-echo '冲突test1';
+echo '解决冲突test1';
 
 ?>
