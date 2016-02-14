@@ -1,5 +1,5 @@
 <?php 
 
-echo '这不是冲突！';
+echo '这不是冲突！master';
 
 ?>
