@@ -1,6 +1,6 @@
 <?php 
 
-echo 'new branch ';
+echo 'new branch origin';
 
 
 ?>
