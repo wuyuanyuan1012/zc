@@ -1,5 +1,5 @@
 <?php 
 
-echo 'siumlation v1.0';
+echo 'siumlation v2.0';
 
 ?>
