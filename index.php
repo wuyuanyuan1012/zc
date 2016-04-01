@@ -1,7 +1,7 @@
 <?php
 
 
-//hotfix
+//hotfix hotfix
 
 include './zc-framework/zc.php';
 
