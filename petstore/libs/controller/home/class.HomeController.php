@@ -1,6 +1,9 @@
 <?php
 /**
  * @author wuyuanyuan
+ * hello zero
+ * hello two
+ * hello three
  */
 class HomeController extends ZcController {
 	/**
