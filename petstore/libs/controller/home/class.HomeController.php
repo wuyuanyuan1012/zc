@@ -1,5 +1,6 @@
 <?php
 /**
+ * merge test
  * @author wuyuanyuan
  */
 class HomeController extends ZcController{
