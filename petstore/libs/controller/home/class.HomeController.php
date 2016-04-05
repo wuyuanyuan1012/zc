@@ -1,13 +1,8 @@
 <?php
 /**
- * merge test
- * merge test2
  * @author wuyuanyuan
- * hello zero
- * hello two
- * hello three
  */
-class HomeController extends ZcController {
+class HomeController extends ZcController{
 	/**
 	 * 构造函数
 	 *
@@ -16,8 +11,6 @@ class HomeController extends ZcController {
 	 */
 	public function __construct($route) {
 		parent::__construct ( $route );
-		
-		echo 'wyy';
 	}
 	
 	public function index () {
