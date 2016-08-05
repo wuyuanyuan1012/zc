@@ -16,3 +16,5 @@ echo '青花瓷';
 echo '小幸运';
 
 echo '陌生老朋友';
+
+echo 'tell it to me now';
