@@ -9,6 +9,6 @@ echo '2016/4/29';
 
 echo 'revert';
 
-echo '';
+echo '天青色等烟雨……';
 
 echo '青花瓷';
