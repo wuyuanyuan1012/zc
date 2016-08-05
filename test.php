@@ -20,3 +20,5 @@ echo '陌生老朋友';
 echo 'tell it to me now';
 
 echo 'test ';
+
+echo 'version 2.0';
